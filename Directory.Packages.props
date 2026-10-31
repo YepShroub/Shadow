@@ -4,4 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
   </ItemGroup>
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.14" />
+  </ItemGroup>
 </Project>
