@@ -1,18 +1,52 @@
 ﻿using System.CommandLine;
 using System.CommandLine.Parsing;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Shadow;
 
-RootCommand rootCommand = CreateRootCommand();
-ParseResult parseResult = rootCommand.Parse(args);
+CommandContext ctx = CreateRootCommand();
+ParseResult parseResult = ctx.Command.Parse(args);
 if (ParseErrors(parseResult.Errors))
 {
     return 1;
 }
 
-// Start the scheduler...
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) =>
+{
+    e.Cancel = true;
+    cts.Cancel();
+};
+
+DirectoryInfo sourcePath = parseResult.GetValue(ctx.SourceOption)!;
+DirectoryInfo destPath = parseResult.GetValue(ctx.DestOption)!;
+FileInfo? logFile = parseResult.GetValue(ctx.LogOption);
+TimeSpan interval = parseResult.GetValue(ctx.IntervalOption);
+bool runOnce = parseResult.GetValue(ctx.OnceOption);
+
+if (sourcePath.FullName == destPath.FullName)
+{
+    Console.WriteLine("Source and destination directories are the same.");
+    return 0;
+}
+
+ILogger<Sync> syncLogger = new NullLogger<Sync>();
+ILogger<SyncScheduler> schedulerLogger = new NullLogger<SyncScheduler>();
+
+Sync sync = new(syncLogger);
+if (runOnce)
+{
+    sync.Run(sourcePath.FullName, destPath.FullName);
+}
+else
+{
+    SyncScheduler scheduler = new(sync, TimeProvider.System, schedulerLogger);
+    await scheduler.RunAsync(sourcePath.FullName, destPath.FullName, interval, cts.Token);
+}
 
 return 0;
 
-static RootCommand CreateRootCommand()
+static CommandContext CreateRootCommand()
 {
     Option<DirectoryInfo> sourceOption = new("--source", "-s")
     {
@@ -35,12 +69,35 @@ static RootCommand CreateRootCommand()
         Description = "Destination directory.",
         Arity = ArgumentArity.ExactlyOne
     };
+    destOption.Validators.Add(result =>
+    {
+        var value = result.GetValue(destOption)!;
+        if (!value.Exists)
+        {
+            result.AddError($"Destination directory '{value.FullName}' does not exist.");
+        }
+    });
 
-    Option<uint> intervalOption = new("--interval", "-i")
+    Option<TimeSpan> intervalOption = new("--interval", "-i")
     {
         Required = true,
-        Description = "Synchronization interval.",
-        Arity = ArgumentArity.ExactlyOne
+        Description = "Synchronization interval in seconds.",
+        Arity = ArgumentArity.ExactlyOne,
+        CustomParser = result =>
+        {
+            if (double.TryParse(result.Tokens.Single().Value, out var span) && span > 0)
+            {
+                try
+                {
+                    TimeSpan timeSpan = TimeSpan.FromSeconds(span);
+                    return timeSpan;
+                }
+                catch { }
+            }
+
+            result.AddError("Interval must be a positive real number.");
+            return TimeSpan.Zero;
+        }
     };
 
     Option<FileInfo> logOption = new("--log", "-l")
@@ -62,7 +119,7 @@ static RootCommand CreateRootCommand()
     rootCommand.Options.Add(logOption);
     rootCommand.Options.Add(onceOption);
 
-    return rootCommand;
+    return new(rootCommand, sourceOption, destOption, intervalOption, logOption, onceOption);
 }
 
 static bool ParseErrors(IReadOnlyList<ParseError> errors)
@@ -73,3 +130,6 @@ static bool ParseErrors(IReadOnlyList<ParseError> errors)
     }
     return errors.Count > 0;
 }
+
+readonly record struct CommandContext(RootCommand Command, Option<DirectoryInfo> SourceOption, Option<DirectoryInfo> DestOption, Option<TimeSpan> IntervalOption, Option<FileInfo> LogOption, Option<bool> OnceOption);
+
