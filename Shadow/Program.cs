@@ -2,6 +2,7 @@
 using System.CommandLine.Parsing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Serilog;
 using Shadow;
 
 CommandContext ctx = CreateRootCommand();
@@ -18,20 +19,31 @@ Console.CancelKeyPress += (_, e) =>
     cts.Cancel();
 };
 
+FileInfo? logFile = parseResult.GetValue(ctx.LogOption);
+var logConfig = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:u} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+if (logFile != null)
+{
+    logConfig = logConfig.WriteTo.File(logFile.FullName, outputTemplate: "[{Timestamp:u} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+}
+Log.Logger = logConfig.CreateLogger();
+
+using var logFactory = LoggerFactory.Create(builder => builder.AddSerilog(Log.Logger));
+
+var syncLogger = logFactory.CreateLogger<Sync>();
+var schedulerLogger = logFactory.CreateLogger<SyncScheduler>();
+
 DirectoryInfo sourcePath = parseResult.GetValue(ctx.SourceOption)!;
 DirectoryInfo destPath = parseResult.GetValue(ctx.DestOption)!;
-FileInfo? logFile = parseResult.GetValue(ctx.LogOption);
 TimeSpan interval = parseResult.GetValue(ctx.IntervalOption);
 bool runOnce = parseResult.GetValue(ctx.OnceOption);
 
 if (sourcePath.FullName == destPath.FullName)
 {
-    Console.WriteLine("Source and destination directories are the same.");
+    Log.Information("Source and destination directories are the same, exitting.");
     return 0;
 }
-
-ILogger<Sync> syncLogger = new NullLogger<Sync>();
-ILogger<SyncScheduler> schedulerLogger = new NullLogger<SyncScheduler>();
 
 Sync sync = new(syncLogger);
 if (runOnce)

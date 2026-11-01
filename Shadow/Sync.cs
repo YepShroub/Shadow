@@ -8,6 +8,6 @@ public sealed class Sync(ILogger<Sync> log)
 
     public void Run(string sourceRoot, string destRoot)
     {
-
+        _log.LogInformation("Syncing {Source} to {Destination}", sourceRoot, destRoot);
     }
 }
