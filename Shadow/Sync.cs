@@ -5,10 +5,9 @@ namespace Shadow;
 public sealed class Sync(ILogger<Sync> log)
 {
     private static readonly StringComparer _stringComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-    private readonly Dictionary<string, long> _fileSizeCache = [];
     private readonly ILogger<Sync> _log = log;
 
-    public void Run(string sourceRoot, string destRoot, DateTime lastSync)
+    public void Run(string sourceRoot, string destRoot)
     {
         _log.LogInformation("Syncing {Source} to {Destination}", sourceRoot, destRoot);
 
@@ -18,7 +17,7 @@ public sealed class Sync(ILogger<Sync> log)
             return;
         }
 
-        SyncDirectories(sourceRoot, destRoot, lastSync);
+        SyncDirectories(sourceRoot, destRoot);
 
         // foreach (FileInfo fi in sourceRoot.GetFiles())
         // {
@@ -33,34 +32,38 @@ public sealed class Sync(ILogger<Sync> log)
 
     }
 
-    private void SyncDirectories(string src, string dest, DateTime? lastSync)
+    private bool NeedsCopy(FileInfo src, FileInfo? dest)
     {
-        HashSet<string> sourcePaths = Directory.EnumerateFiles(src, "*", SearchOption.AllDirectories)
-            .Select(f => Path.GetRelativePath(src, f))
-            .ToHashSet(_stringComparer);
+        return dest is null || dest.Length != src.Length || dest.LastWriteTimeUtc != src.LastWriteTimeUtc;
+    }
 
-        var deletedFiles = Directory.EnumerateFiles(dest, "*", SearchOption.AllDirectories)
-            .Where(f => !sourcePaths.Contains(Path.GetRelativePath(dest, f)));
-
-        foreach (var f in deletedFiles)
+    private void SyncDirectories(string src, string dest)
+    {
+        var options = new EnumerationOptions
         {
-            var fp = Path.Combine(dest, f);
-            _log.LogInformation("Deleting {Deleted}.", fp);
-            File.Delete(Path.Combine(dest, fp));
+            RecurseSubdirectories = true,
+            MatchType = MatchType.Simple,
+            IgnoreInaccessible = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+        };
+
+        var destFiles = new DirectoryInfo(dest).EnumerateFiles("*", options)
+            .ToDictionary(e => Path.GetRelativePath(dest, e.FullName), _stringComparer);
+
+        foreach (var srcFile in new DirectoryInfo(src).EnumerateFiles("*", options))
+        {
+            var relPath = Path.GetRelativePath(src, srcFile.FullName);
+            if (NeedsCopy(srcFile, destFiles.GetValueOrDefault(relPath)))
+            {
+                CopyFile(srcFile, destFiles.GetValueOrDefault(relPath) ?? new(Path.Combine(dest, relPath)));
+            }
+            destFiles.Remove(relPath);
         }
 
-        foreach (var fp in Directory.EnumerateFiles(src, "*", SearchOption.AllDirectories))
+        foreach (var leftoverFile in destFiles.Values)
         {
-            FileInfo srcFile = new(fp);
-            if (srcFile.LastWriteTimeUtc < lastSync! && srcFile.Length == _fileSizeCache.GetValueOrDefault(fp, -1))
-            {
-                _log.LogDebug("Skipping sync of file {Source} because it hasn't changed.", fp);
-                continue;
-            }
-
-            _fileSizeCache[fp] = srcFile.Length;
-
-            CopyFile(srcFile, new(Path.Join(dest, Path.GetRelativePath(src, fp))));
+            _log.LogInformation("Deleting {Deleted}.", leftoverFile.FullName);
+            leftoverFile.Delete();
         }
 
         HashSet<string> sourceDirs = Directory.EnumerateDirectories(src, "*", SearchOption.AllDirectories)
@@ -81,10 +84,12 @@ public sealed class Sync(ILogger<Sync> log)
         foreach (var d in destDirs.Except(sourceDirs, _stringComparer))
         {
             var dd = Path.Combine(dest, d);
-            _log.LogInformation("Deleting empty directory {Directory}.", dd);
-            Directory.Delete(dd);
+            if (Path.Exists(dd))
+            {
+                _log.LogInformation("Deleting directory {Directory}.", dd);
+                Directory.Delete(dd, true);
+            }
         }
-
     }
 
     private void CopyFile(FileInfo src, FileInfo dst)

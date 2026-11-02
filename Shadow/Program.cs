@@ -47,7 +47,7 @@ if (sourcePath.FullName == destPath.FullName)
 Sync sync = new(syncLogger);
 if (runOnce)
 {
-    sync.Run(sourcePath.FullName, destPath.FullName, DateTime.MinValue);
+    sync.Run(sourcePath.FullName, destPath.FullName);
 }
 else
 {

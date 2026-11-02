@@ -7,7 +7,6 @@ public sealed class SyncScheduler(Sync sync, TimeProvider time, ILogger<SyncSche
     private readonly Sync _sync = sync ?? throw new ArgumentNullException();
     private readonly TimeProvider _time = time ?? throw new ArgumentNullException();
     private readonly ILogger<SyncScheduler> _log = log;
-    private DateTime _lastSyncTime = DateTime.MinValue;
 
     /// <summary>
     /// Start the scheduler, syncing the two provided directories.
@@ -27,9 +26,7 @@ public sealed class SyncScheduler(Sync sync, TimeProvider time, ILogger<SyncSche
         {
             do
             {
-                var now = DateTime.UtcNow;
-                _sync.Run(sourceRoot, destRoot, _lastSyncTime);
-                _lastSyncTime = now;
+                _sync.Run(sourceRoot, destRoot);
             }
             while (await timer.WaitForNextTickAsync(ct));
         }
