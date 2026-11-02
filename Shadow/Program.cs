@@ -1,7 +1,6 @@
 ﻿using System.CommandLine;
 using System.CommandLine.Parsing;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
 using Shadow;
 
@@ -21,7 +20,7 @@ Console.CancelKeyPress += (_, e) =>
 
 FileInfo? logFile = parseResult.GetValue(ctx.LogOption);
 var logConfig = new LoggerConfiguration()
-    .MinimumLevel.Information()
+    .MinimumLevel.Debug()
     .WriteTo.Console(outputTemplate: "[{Timestamp:u} {Level:u3}] {Message:lj}{NewLine}{Exception}");
 if (logFile != null)
 {
@@ -48,7 +47,7 @@ if (sourcePath.FullName == destPath.FullName)
 Sync sync = new(syncLogger);
 if (runOnce)
 {
-    sync.Run(sourcePath.FullName, destPath.FullName);
+    sync.Run(sourcePath.FullName, destPath.FullName, DateTime.MinValue);
 }
 else
 {
@@ -124,7 +123,7 @@ static CommandContext CreateRootCommand()
         Arity = ArgumentArity.ZeroOrOne
     };
 
-    RootCommand rootCommand = new();
+    RootCommand rootCommand = [];
     rootCommand.Options.Add(sourceOption);
     rootCommand.Options.Add(destOption);
     rootCommand.Options.Add(intervalOption);
