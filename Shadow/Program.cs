@@ -4,60 +4,65 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Shadow;
 
-CommandContext ctx = CreateRootCommand();
-ParseResult parseResult = ctx.Command.Parse(args);
-if (ParseErrors(parseResult.Errors))
-{
-    return 1;
-}
-
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
     cts.Cancel();
 };
-
-FileInfo? logFile = parseResult.GetValue(ctx.LogOption);
-var logConfig = new LoggerConfiguration()
-    .MinimumLevel.Debug()
-    .WriteTo.Console(outputTemplate: "[{Timestamp:u} {Level:u3}] {Message:lj}{NewLine}{Exception}");
-if (logFile != null)
+CommandContext ctx = CreateRootCommand(cts);
+ctx.Command.SetAction(Run);
+ParseResult parseResult = ctx.Command.Parse(args);
+if (ParseErrors(parseResult.Errors))
 {
-    logConfig = logConfig.WriteTo.File(logFile.FullName, outputTemplate: "[{Timestamp:u} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+    return 1;
 }
-Log.Logger = logConfig.CreateLogger();
 
-using var logFactory = LoggerFactory.Create(builder => builder.AddSerilog(Log.Logger));
+return parseResult.Invoke();
 
-var syncLogger = logFactory.CreateLogger<Sync>();
-var schedulerLogger = logFactory.CreateLogger<SyncScheduler>();
-
-DirectoryInfo sourcePath = parseResult.GetValue(ctx.SourceOption)!;
-DirectoryInfo destPath = parseResult.GetValue(ctx.DestOption)!;
-TimeSpan interval = parseResult.GetValue(ctx.IntervalOption);
-bool runOnce = parseResult.GetValue(ctx.OnceOption);
-
-if (sourcePath.FullName == destPath.FullName)
+async Task<int> Run(ParseResult parseResult, CancellationToken ct)
 {
-    Log.Information("Source and destination directories are the same, exitting.");
+    FileInfo? logFile = parseResult.GetValue(ctx.LogOption);
+    var logConfig = new LoggerConfiguration()
+        .MinimumLevel.Debug()
+        .WriteTo.Console(outputTemplate: "[{Timestamp:u} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+    if (logFile != null)
+    {
+        logConfig = logConfig.WriteTo.File(logFile.FullName, outputTemplate: "[{Timestamp:u} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+    }
+    Log.Logger = logConfig.CreateLogger();
+
+    using var logFactory = LoggerFactory.Create(builder => builder.AddSerilog(Log.Logger));
+
+    var syncLogger = logFactory.CreateLogger<Sync>();
+    var schedulerLogger = logFactory.CreateLogger<SyncScheduler>();
+
+    DirectoryInfo sourcePath = parseResult.GetValue(ctx.SourceOption)!;
+    DirectoryInfo destPath = parseResult.GetValue(ctx.DestOption)!;
+    TimeSpan interval = parseResult.GetValue(ctx.IntervalOption);
+    bool runOnce = parseResult.GetValue(ctx.OnceOption);
+
+    if (sourcePath.FullName == destPath.FullName)
+    {
+        Log.Information("Source and destination directories are the same, exitting.");
+        return 0;
+    }
+
+    Sync sync = new(syncLogger);
+    if (runOnce)
+    {
+        sync.Run(sourcePath.FullName, destPath.FullName);
+    }
+    else
+    {
+        SyncScheduler scheduler = new(sync, TimeProvider.System, schedulerLogger);
+        await scheduler.RunAsync(sourcePath.FullName, destPath.FullName, interval, ct);
+    }
+
     return 0;
 }
 
-Sync sync = new(syncLogger);
-if (runOnce)
-{
-    sync.Run(sourcePath.FullName, destPath.FullName);
-}
-else
-{
-    SyncScheduler scheduler = new(sync, TimeProvider.System, schedulerLogger);
-    await scheduler.RunAsync(sourcePath.FullName, destPath.FullName, interval, cts.Token);
-}
-
-return 0;
-
-static CommandContext CreateRootCommand()
+CommandContext CreateRootCommand(CancellationTokenSource cts)
 {
     Option<DirectoryInfo> sourceOption = new("--source", "-s")
     {
@@ -142,5 +147,7 @@ static bool ParseErrors(IReadOnlyList<ParseError> errors)
     return errors.Count > 0;
 }
 
-readonly record struct CommandContext(RootCommand Command, Option<DirectoryInfo> SourceOption, Option<DirectoryInfo> DestOption, Option<TimeSpan> IntervalOption, Option<FileInfo> LogOption, Option<bool> OnceOption);
+readonly record struct CommandContext(RootCommand Command, Option<DirectoryInfo> SourceOption, Option<DirectoryInfo> DestOption, Option<TimeSpan> IntervalOption, Option<FileInfo> LogOption, Option<bool> OnceOption)
+{
+}
 
